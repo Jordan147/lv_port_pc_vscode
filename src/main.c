@@ -38,6 +38,7 @@
 /**********************
  *  STATIC PROTOTYPES
  **********************/
+static void version_timer_cb(lv_timer_t * timer);
 
 /**********************
  *  STATIC VARIABLES
@@ -73,6 +74,25 @@ int main(int argc, char **argv)
   // lv_demo_widgets();
   lv_demo_player();
 
+  /* Show LVGL version in top-right corner for 5 seconds */
+  static lv_obj_t * version_label = NULL;
+  version_label = lv_label_create(lv_scr_act());
+  lv_label_set_text_fmt(version_label, "LVGL v%d.%d.%d", 
+                        LVGL_VERSION_MAJOR, 
+                        LVGL_VERSION_MINOR, 
+                        LVGL_VERSION_PATCH);
+  lv_obj_set_style_text_color(version_label, lv_color_white(), 0);
+  lv_obj_set_style_text_font(version_label, &lv_font_montserrat_12, 0);
+  lv_obj_set_style_bg_color(version_label, lv_color_black(), 0);
+  lv_obj_set_style_bg_opa(version_label, LV_OPA_70, 0);
+  lv_obj_set_style_pad_all(version_label, 4, 0);
+  lv_obj_set_style_radius(version_label, 3, 0);
+  lv_obj_align(version_label, LV_ALIGN_TOP_RIGHT, -10, 10);
+
+  /* Create timer to hide version label after 5 seconds */
+  lv_timer_t * version_timer = lv_timer_create(version_timer_cb, 5000, version_label);
+  lv_timer_set_repeat_count(version_timer, 1);
+
   while (1)
   {
     /* Periodically call the lv_task handler.
@@ -97,3 +117,14 @@ int main(int argc, char **argv)
 /**********************
  *   STATIC FUNCTIONS
  **********************/
+
+/**
+ * Timer callback to hide the version label
+ */
+static void version_timer_cb(lv_timer_t * timer)
+{
+    lv_obj_t * label = (lv_obj_t*)lv_timer_get_user_data(timer);
+    if(label) {
+        lv_obj_del(label);
+    }
+}
