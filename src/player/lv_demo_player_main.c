@@ -18,7 +18,6 @@
 /*********************
  *      DEFINES
  *********************/
-#define ACTIVE_TRACK_CNT 3
 #define INTRO_TIME 2000
 #define BAR_COLOR1 lv_color_hex(0xe9dbfc)
 #define BAR_COLOR2 lv_color_hex(0x6f8af6)
@@ -69,6 +68,12 @@ static void spectrum_end_cb(lv_anim_t *a);
 static void album_fade_anim_cb(void *var, int32_t v);
 static int32_t get_cos(int32_t deg, int32_t a);
 static int32_t get_sin(int32_t deg, int32_t a);
+static void cover_spectrum_timer_cb(lv_timer_t *timer);
+static void switch_cover_spectrum_display(void);
+
+static void setup_fullsize_image_display(void);
+static void cover_cycle_timer_cb(lv_timer_t *timer);
+static void update_album_cover_for_audio(void);
 
 /**********************
  *  STATIC VARIABLES
@@ -98,6 +103,18 @@ static lv_obj_t *play_obj;
 static const uint16_t (*spectrum)[4];
 static uint32_t spectrum_len;
 static const uint16_t rnd_array[30] = {994, 285, 553, 11, 792, 707, 966, 641, 852, 827, 44, 352, 146, 581, 490, 80, 729, 58, 695, 940, 724, 561, 124, 653, 27, 292, 557, 506, 382, 199};
+
+static void delayed_track_load_cb(lv_timer_t *timer);
+
+// Audio-specific animation variables
+static lv_timer_t *cover_spectrum_timer = NULL;
+static bool show_cover = true;                         // true = show cover, false = show spectrum
+static uint32_t cover_spectrum_switch_interval = 5000; // 5 seconds
+
+// Cover cycling variables
+static uint32_t current_cover_index = 0; // Index of current cover (0-2)
+static lv_timer_t *cover_cycle_timer = NULL;
+static uint32_t cover_cycle_interval = 3000; // 3 seconds for cover cycling
 
 /**********************
  *      MACROS
@@ -274,17 +291,21 @@ lv_obj_t *lv_demo_player_main_create(lv_obj_t *parent)
     lv_obj_fade_in(icon_box, 1000, INTRO_TIME + 1000);
     lv_obj_fade_in(ctrl_box, 1000, INTRO_TIME + 1000);
     lv_obj_fade_in(handle_box, 1000, INTRO_TIME + 1000);
-    lv_obj_fade_in(album_image_obj, 800, INTRO_TIME + 1000);
-    lv_obj_fade_in(spectrum_obj, 0, INTRO_TIME);
+
+    // Don't fade in album and spectrum objects initially -
+    // track_load() will handle their visibility based on media type
 
     lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
-    lv_anim_set_var(&a, album_image_obj);
-    lv_anim_set_duration(&a, 1000);
-    lv_anim_set_delay(&a, INTRO_TIME + 1000);
-    lv_anim_set_values(&a, 1, LV_SCALE_NONE);
-    lv_anim_set_exec_cb(&a, _image_set_scale_anim_cb);
-    lv_anim_set_completed_cb(&a, NULL);
-    lv_anim_start(&a);
+    if (album_image_obj)
+    {
+        lv_anim_set_var(&a, album_image_obj);
+        lv_anim_set_duration(&a, 1000);
+        lv_anim_set_delay(&a, INTRO_TIME + 1000);
+        lv_anim_set_values(&a, 1, LV_SCALE_NONE);
+        lv_anim_set_exec_cb(&a, _image_set_scale_anim_cb);
+        lv_anim_set_completed_cb(&a, NULL);
+        lv_anim_start(&a);
+    }
 
     /* Create an intro from a logo + label */
     LV_IMAGE_DECLARE(img_lv_demo_player_logo);
@@ -313,23 +334,30 @@ lv_obj_t *lv_demo_player_main_create(lv_obj_t *parent)
 
     lv_obj_update_layout(main_cont);
 
+    // Delay the track loading to avoid issues with initialization
+    lv_timer_create(delayed_track_load_cb, 100, NULL);
+
     return main_cont;
 }
 
 void lv_demo_player_album_next(bool next)
 {
+    uint32_t total_tracks = lv_demo_player_get_track_count();
+    if (total_tracks == 0)
+        return; // No tracks available
+
     uint32_t id = track_id;
     if (next)
     {
         id++;
-        if (id >= ACTIVE_TRACK_CNT)
+        if (id >= total_tracks)
             id = 0;
     }
     else
     {
         if (id == 0)
         {
-            id = ACTIVE_TRACK_CNT - 1;
+            id = total_tracks - 1;
         }
         else
         {
@@ -358,15 +386,66 @@ void lv_demo_player_resume(void)
 {
     playing = true;
     spectrum_i = spectrum_i_pause;
-    lv_anim_t a;
-    lv_anim_init(&a);
-    lv_anim_set_values(&a, spectrum_i, spectrum_len - 1);
-    lv_anim_set_exec_cb(&a, spectrum_anim_cb);
-    lv_anim_set_var(&a, spectrum_obj);
-    lv_anim_set_duration(&a, ((spectrum_len - spectrum_i) * 1000) / 30);
-    lv_anim_set_reverse_duration(&a, 0);
-    lv_anim_set_completed_cb(&a, spectrum_end_cb);
-    lv_anim_start(&a);
+
+    // Check if current track is audio
+    if (lv_demo_player_is_audio_track(track_id))
+    {
+        // For audio files, start cover/spectrum switching animation
+        show_cover = true; // Start with cover
+        if (album_image_obj)
+        {
+            lv_obj_set_style_opa(album_image_obj, LV_OPA_COVER, 0);
+        }
+        lv_obj_set_style_opa(spectrum_obj, LV_OPA_TRANSP, 0);
+
+        // Start timer for switching between cover and spectrum
+        if (cover_spectrum_timer)
+        {
+            lv_timer_delete(cover_spectrum_timer);
+        }
+        cover_spectrum_timer = lv_timer_create(cover_spectrum_timer_cb, cover_spectrum_switch_interval, NULL);
+
+        // Start timer for cycling through covers during cover display
+        if (cover_cycle_timer)
+        {
+            lv_timer_delete(cover_cycle_timer);
+        }
+        cover_cycle_timer = lv_timer_create(cover_cycle_timer_cb, cover_cycle_interval, NULL);
+
+        // Start spectrum animation (but hidden initially)
+        lv_anim_t a;
+        lv_anim_init(&a);
+        lv_anim_set_values(&a, spectrum_i, spectrum_len - 1);
+        lv_anim_set_exec_cb(&a, spectrum_anim_cb);
+        lv_anim_set_var(&a, spectrum_obj);
+        lv_anim_set_duration(&a, ((spectrum_len - spectrum_i) * 1000) / 30);
+        lv_anim_set_reverse_duration(&a, 0);
+        lv_anim_set_completed_cb(&a, spectrum_end_cb);
+        lv_anim_start(&a);
+    }
+    else
+    {
+        // For non-audio files (images/videos), hide both cover and spectrum
+        if (album_image_obj)
+        {
+            lv_obj_set_style_opa(album_image_obj, LV_OPA_TRANSP, 0);
+        }
+        lv_obj_set_style_opa(spectrum_obj, LV_OPA_TRANSP, 0);
+
+        // No spectrum animation or cover switching for non-audio files
+        if (cover_spectrum_timer)
+        {
+            lv_timer_delete(cover_spectrum_timer);
+            cover_spectrum_timer = NULL;
+        }
+
+        // No cover cycling for non-audio files
+        if (cover_cycle_timer)
+        {
+            lv_timer_delete(cover_cycle_timer);
+            cover_cycle_timer = NULL;
+        }
+    }
 
     if (sec_counter_timer)
         lv_timer_resume(sec_counter_timer);
@@ -380,9 +459,35 @@ void lv_demo_player_pause(void)
     playing = false;
     spectrum_i_pause = spectrum_i;
     spectrum_i = 0;
+
+    // Stop cover/spectrum switching timer
+    if (cover_spectrum_timer)
+    {
+        lv_timer_delete(cover_spectrum_timer);
+        cover_spectrum_timer = NULL;
+    }
+
+    // Stop cover cycling timer
+    if (cover_cycle_timer)
+    {
+        lv_timer_delete(cover_cycle_timer);
+        cover_cycle_timer = NULL;
+    }
+
     lv_anim_delete(spectrum_obj, spectrum_anim_cb);
     lv_obj_invalidate(spectrum_obj);
-    lv_image_set_scale(album_image_obj, LV_SCALE_NONE);
+    if (album_image_obj)
+    {
+        lv_image_set_scale(album_image_obj, LV_SCALE_NONE);
+    }
+
+    // When paused, always show cover
+    if (album_image_obj)
+    {
+        lv_obj_set_style_opa(album_image_obj, LV_OPA_COVER, 0);
+    }
+    lv_obj_set_style_opa(spectrum_obj, LV_OPA_TRANSP, 0);
+
     if (sec_counter_timer)
         lv_timer_pause(sec_counter_timer);
     lv_obj_remove_state(play_obj, LV_STATE_CHECKED);
@@ -560,7 +665,19 @@ static lv_obj_t *create_spectrum_obj(lv_obj_t *parent)
     lv_obj_remove_flag(obj, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_event_cb(obj, spectrum_draw_event_cb, LV_EVENT_ALL, NULL);
     lv_obj_refresh_ext_draw_size(obj);
+
+    // Initially hide spectrum object - will be shown when audio files are loaded
+    lv_obj_set_style_opa(obj, LV_OPA_TRANSP, 0);
+
+    // Create album image normally - we'll handle visibility later
     album_image_obj = album_image_create(obj);
+
+    // Initially hide album image as well
+    if (album_image_obj)
+    {
+        lv_obj_set_style_opa(album_image_obj, LV_OPA_TRANSP, 0);
+    }
+
     return obj;
 }
 
@@ -609,7 +726,11 @@ static lv_obj_t *create_ctrl_box(lv_obj_t *parent)
     lv_obj_set_grid_cell(play_obj, LV_GRID_ALIGN_CENTER, 3, 1, LV_GRID_ALIGN_CENTER, 0, 1);
 
     lv_obj_add_event_cb(play_obj, play_event_click_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_add_flag(play_obj, LV_OBJ_FLAG_CLICKABLE);
+
+    // Initially disable play button - will be enabled based on media type when track loads
+    lv_obj_clear_flag(play_obj, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_style_opa(play_obj, LV_OPA_30, 0);
+
     lv_obj_set_width(play_obj, img_lv_demo_player_btn_play.header.w);
 
     icon = lv_image_create(cont);
@@ -689,8 +810,13 @@ static void track_load(uint32_t id)
 
     if (id == track_id)
         return;
+
+    // Reset cover index when loading new track
+    current_cover_index = 0;
+
     bool next = false;
-    if ((track_id + 1) % ACTIVE_TRACK_CNT == id)
+    uint32_t total_tracks = lv_demo_player_get_track_count();
+    if (total_tracks > 0 && (track_id + 1) % total_tracks == id)
         next = true;
 
     lv_demo_player_list_button_check(track_id, false);
@@ -703,6 +829,57 @@ static void track_load(uint32_t id)
     lv_label_set_text(artist_label, lv_demo_player_get_artist(track_id));
     lv_label_set_text(genre_label, lv_demo_player_get_genre(track_id));
 
+    media_type_t current_media_type = get_media_type_by_id(track_id);
+
+    // Handle different media types - basic visibility control
+    if (current_media_type == MEDIA_TYPE_AUDIO)
+    {
+        // Audio files: Enable play button, show spectrum and cover
+        lv_obj_clear_flag(play_obj, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_flag(play_obj, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_style_opa(play_obj, LV_OPA_COVER, 0);
+
+        // Show spectrum and album for audio
+        lv_obj_set_style_opa(spectrum_obj, LV_OPA_COVER, 0);
+        if (album_image_obj)
+        {
+            lv_obj_set_style_opa(album_image_obj, LV_OPA_COVER, 0);
+        }
+    }
+    else if (current_media_type == MEDIA_TYPE_IMAGE)
+    {
+        // Image files: Disable play button, hide spectrum and album covers
+        lv_obj_clear_flag(play_obj, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_style_opa(play_obj, LV_OPA_30, 0);
+
+        // Hide spectrum and album cover for images
+        lv_obj_set_style_opa(spectrum_obj, LV_OPA_TRANSP, 0);
+        if (album_image_obj)
+        {
+            lv_obj_set_style_opa(album_image_obj, LV_OPA_TRANSP, 0);
+        }
+    }
+    else
+    {
+        // Video or other files: Disable play button, hide spectrum and covers
+        lv_obj_clear_flag(play_obj, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_style_opa(play_obj, LV_OPA_40, 0);
+
+        // Hide spectrum and album cover for non-audio
+        lv_obj_set_style_opa(spectrum_obj, LV_OPA_TRANSP, 0);
+        if (album_image_obj)
+        {
+            lv_obj_set_style_opa(album_image_obj, LV_OPA_TRANSP, 0);
+        }
+    }
+
+    // Return early for non-audio files to skip complex animations
+    if (current_media_type != MEDIA_TYPE_AUDIO)
+    {
+        return;
+    }
+
+    // Album transition animations for audio files only
     lv_anim_t a;
     lv_anim_init(&a);
     lv_anim_set_var(&a, album_image_obj);
@@ -748,6 +925,12 @@ static void track_load(uint32_t id)
 
     album_image_obj = album_image_create(spectrum_obj);
 
+    // Only continue with animations if we have an album image (audio files only)
+    if (!album_image_obj)
+    {
+        return;
+    }
+
     lv_anim_set_path_cb(&a, lv_anim_path_overshoot);
     lv_anim_set_var(&a, album_image_obj);
     lv_anim_set_duration(&a, 500);
@@ -779,6 +962,150 @@ int32_t get_sin(int32_t deg, int32_t a)
     int32_t r = lv_trigo_sin(deg) * a;
 
     return (r + LV_TRIGO_SIN_MAX / 2) >> LV_TRIGO_SHIFT;
+}
+
+static void cover_spectrum_timer_cb(lv_timer_t *timer)
+{
+    LV_UNUSED(timer);
+
+    // Only switch if we're playing an audio track
+    if (playing && lv_demo_player_is_audio_track(track_id))
+    {
+        switch_cover_spectrum_display();
+    }
+}
+
+static void switch_cover_spectrum_display(void)
+{
+    lv_anim_t fade_out, fade_in;
+
+    if (show_cover)
+    {
+        // Currently showing cover, switch to spectrum
+
+        // Fade out cover
+        lv_anim_init(&fade_out);
+        lv_anim_set_var(&fade_out, album_image_obj);
+        lv_anim_set_values(&fade_out, LV_OPA_COVER, LV_OPA_TRANSP);
+        lv_anim_set_exec_cb(&fade_out, (lv_anim_exec_xcb_t)lv_obj_set_style_opa);
+        lv_anim_set_duration(&fade_out, 500);
+        lv_anim_start(&fade_out);
+
+        // Fade in spectrum
+        lv_anim_init(&fade_in);
+        lv_anim_set_var(&fade_in, spectrum_obj);
+        lv_anim_set_values(&fade_in, LV_OPA_TRANSP, LV_OPA_COVER);
+        lv_anim_set_exec_cb(&fade_in, (lv_anim_exec_xcb_t)lv_obj_set_style_opa);
+        lv_anim_set_duration(&fade_in, 500);
+        lv_anim_set_delay(&fade_in, 250);
+        lv_anim_start(&fade_in);
+
+        show_cover = false;
+    }
+    else
+    {
+        // Currently showing spectrum, switch to cover
+
+        // Fade out spectrum
+        lv_anim_init(&fade_out);
+        lv_anim_set_var(&fade_out, spectrum_obj);
+        lv_anim_set_values(&fade_out, LV_OPA_COVER, LV_OPA_TRANSP);
+        lv_anim_set_exec_cb(&fade_out, (lv_anim_exec_xcb_t)lv_obj_set_style_opa);
+        lv_anim_set_duration(&fade_out, 500);
+        lv_anim_start(&fade_out);
+
+        // Fade in cover
+        lv_anim_init(&fade_in);
+        lv_anim_set_var(&fade_in, album_image_obj);
+        lv_anim_set_values(&fade_in, LV_OPA_TRANSP, LV_OPA_COVER);
+        lv_anim_set_exec_cb(&fade_in, (lv_anim_exec_xcb_t)lv_obj_set_style_opa);
+        lv_anim_set_duration(&fade_in, 500);
+        lv_anim_set_delay(&fade_in, 250);
+        lv_anim_start(&fade_in);
+
+        show_cover = true;
+    }
+}
+
+static void setup_fullsize_image_display(void)
+{
+    // For image files, we want to maximize the display area
+    // Set album image to fill the container optimally
+    if (album_image_obj)
+    {
+        // Make the image fill more of the available space
+        lv_obj_set_width(album_image_obj, lv_pct(90));  // 90% of container width
+        lv_obj_set_height(album_image_obj, lv_pct(90)); // 90% of container height
+
+        // Center the image in the container
+        lv_obj_center(album_image_obj);
+
+        // Ensure the image scales properly to fit
+        lv_obj_set_style_img_opa(album_image_obj, LV_OPA_COVER, 0);
+
+        // Set image to cover mode for optimal display
+        lv_image_set_scale(album_image_obj, LV_SCALE_NONE);
+    }
+}
+
+static void cover_cycle_timer_cb(lv_timer_t *timer)
+{
+    LV_UNUSED(timer);
+
+    // Only cycle covers for audio tracks when cover is being shown
+    if (playing && lv_demo_player_is_audio_track(track_id) && show_cover)
+    {
+        current_cover_index = (current_cover_index + 1) % 3;
+        update_album_cover_for_audio();
+    }
+}
+
+static void update_album_cover_for_audio(void)
+{
+    LV_IMAGE_DECLARE(img_lv_demo_player_cover_1);
+    LV_IMAGE_DECLARE(img_lv_demo_player_cover_2);
+    LV_IMAGE_DECLARE(img_lv_demo_player_cover_3);
+
+    if (!album_image_obj)
+        return;
+
+    // Update the cover image based on current_cover_index
+    switch (current_cover_index % 3)
+    {
+    case 0:
+        lv_image_set_src(album_image_obj, &img_lv_demo_player_cover_1);
+        spectrum = spectrum_1;
+        spectrum_len = sizeof(spectrum_1) / sizeof(spectrum_1[0]);
+        break;
+    case 1:
+        lv_image_set_src(album_image_obj, &img_lv_demo_player_cover_2);
+        spectrum = spectrum_2;
+        spectrum_len = sizeof(spectrum_2) / sizeof(spectrum_2[0]);
+        break;
+    case 2:
+        lv_image_set_src(album_image_obj, &img_lv_demo_player_cover_3);
+        spectrum = spectrum_3;
+        spectrum_len = sizeof(spectrum_3) / sizeof(spectrum_3[0]);
+        break;
+    }
+
+    // Add a subtle fade effect when changing covers
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, album_image_obj);
+    lv_anim_set_values(&a, LV_OPA_60, LV_OPA_COVER);
+    lv_anim_set_exec_cb(&a, album_fade_anim_cb);
+    lv_anim_set_duration(&a, 300);
+    lv_anim_start(&a);
+}
+
+static void delayed_track_load_cb(lv_timer_t *timer)
+{
+    // Load the first track after UI is fully initialized
+    track_load(0);
+
+    // Delete the timer as it's no longer needed
+    lv_timer_delete(timer);
 }
 
 static void del_counter_timer_cb(lv_event_t *e)
@@ -964,7 +1291,10 @@ static void spectrum_anim_cb(void *a, int32_t v)
     if (spectrum[spectrum_i][0] < 4)
         bar_rot += dir;
 
-    lv_image_set_scale(album_image_obj, LV_SCALE_NONE + spectrum[spectrum_i][0]);
+    if (album_image_obj)
+    {
+        lv_image_set_scale(album_image_obj, LV_SCALE_NONE + spectrum[spectrum_i][0]);
+    }
 }
 
 static void start_anim_cb(void *var, int32_t v)
@@ -983,24 +1313,26 @@ static lv_obj_t *album_image_create(lv_obj_t *parent)
     lv_obj_t *img;
     img = lv_image_create(parent);
 
-    switch (track_id)
+    // Use simple logic based on track_id for now
+    switch (track_id % 3)
     {
-    case 2:
-        lv_image_set_src(img, &img_lv_demo_player_cover_3);
-        spectrum = spectrum_3;
-        spectrum_len = sizeof(spectrum_3) / sizeof(spectrum_3[0]);
+    case 0:
+        lv_image_set_src(img, &img_lv_demo_player_cover_1);
+        spectrum = spectrum_1;
+        spectrum_len = sizeof(spectrum_1) / sizeof(spectrum_1[0]);
         break;
     case 1:
         lv_image_set_src(img, &img_lv_demo_player_cover_2);
         spectrum = spectrum_2;
         spectrum_len = sizeof(spectrum_2) / sizeof(spectrum_2[0]);
         break;
-    case 0:
-        lv_image_set_src(img, &img_lv_demo_player_cover_1);
-        spectrum = spectrum_1;
-        spectrum_len = sizeof(spectrum_1) / sizeof(spectrum_1[0]);
+    case 2:
+        lv_image_set_src(img, &img_lv_demo_player_cover_3);
+        spectrum = spectrum_3;
+        spectrum_len = sizeof(spectrum_3) / sizeof(spectrum_3[0]);
         break;
     }
+
     lv_image_set_antialias(img, false);
     lv_obj_align(img, LV_ALIGN_CENTER, 0, 0);
     lv_obj_add_event_cb(img, album_gesture_event_cb, LV_EVENT_GESTURE, NULL);
@@ -1023,6 +1355,13 @@ static void album_gesture_event_cb(lv_event_t *e)
 static void play_event_click_cb(lv_event_t *e)
 {
     lv_obj_t *obj = lv_event_get_target(e);
+
+    // Only allow play/pause for audio tracks
+    if (!lv_demo_player_is_audio_track(track_id))
+    {
+        return;
+    }
+
     if (lv_obj_has_state(obj, LV_STATE_CHECKED))
     {
         lv_demo_player_resume();
