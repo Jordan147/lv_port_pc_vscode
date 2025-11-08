@@ -1,6 +1,17 @@
 cmake_minimum_required(VERSION 3.12.4)
 project(lvgl C CXX)
 
+# Enable parallel builds and optimizations
+include(ProcessorCount)
+ProcessorCount(N)
+if(NOT N EQUAL 0)
+    set(CMAKE_BUILD_PARALLEL_LEVEL ${N})
+    message(STATUS "Building with ${N} parallel jobs")
+endif()
+
+# Export compile commands for better IDE support
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 # Set the correct FreeRTOS port for your system (e.g., Posix for WSL)
 set(FREERTOS_PORT GCC_POSIX CACHE STRING "Port for FreeRTOS on Posix environment")
 
@@ -35,6 +46,8 @@ endif()
 
 # Main include files of the project
 include_directories(${PROJECT_SOURCE_DIR}/main/inc)
+include_directories(${PROJECT_SOURCE_DIR}/src/player)
+include_directories(${PROJECT_SOURCE_DIR}/lvgl)
 
 # Define options for LVGL with default values (OFF)
 option(LV_USE_DRAW_SDL "Use SDL draw unit" OFF)
@@ -47,6 +60,28 @@ option(LV_USE_FREETYPE "Use freetype library" OFF)
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# Compiler optimizations for faster builds
+if(CMAKE_BUILD_TYPE STREQUAL "Release")
+    # Release mode optimizations
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O3 -DNDEBUG")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -DNDEBUG")
+
+    # Enable link-time optimization for release builds
+    if(NOT WIN32)
+        set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
+    endif()
+else()
+    # Debug mode optimizations for faster compile times
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O0 -g")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O0 -g")
+endif()
+
+# Enable parallel compilation for Visual Studio
+if(MSVC)
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /MP")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /MP")
+endif()
 
 # Set the output path for the executable
 set(EXECUTABLE_OUTPUT_PATH ${PROJECT_SOURCE_DIR}/bin)
@@ -65,7 +100,13 @@ add_compile_definitions($<$<BOOL:${LV_USE_FFMPEG}>:LV_USE_FFMPEG=1>)
 add_subdirectory(lvgl)
 target_include_directories(lvgl PUBLIC ${PROJECT_SOURCE_DIR} ${SDL2_INCLUDE_DIRS})
 
-set(MAIN_SOURCES src/mouse_cursor_icon.c src/hal/hal.c)
+# Collect all player source files
+file(GLOB PLAYER_SOURCES
+    "${PROJECT_SOURCE_DIR}/src/player/*.c"
+    "${PROJECT_SOURCE_DIR}/src/player/assets/*.c"
+)
+
+set(MAIN_SOURCES src/mouse_cursor_icon.c src/hal/hal.c ${PLAYER_SOURCES})
 set(MAIN_LIBS lvgl lvgl::examples lvgl::demos lvgl::thorvg ${SDL2_LIBRARIES})
 
 # Create the main executable, depending on the FreeRTOS option

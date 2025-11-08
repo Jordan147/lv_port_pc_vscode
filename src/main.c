@@ -23,6 +23,7 @@
 #include "lvgl/examples/lv_examples.h"
 #include "lvgl/demos/lv_demos.h"
 #include <SDL.h>
+#include "lv_demo_player.h"
 
 #include "hal/hal.h"
 
@@ -69,9 +70,11 @@ int main(int argc, char **argv)
   /* - lv_demo_stress(); */
   /* - lv_example_label_1(); */
   /* - etc. */
-  lv_demo_widgets();
+  // lv_demo_widgets();
+  lv_demo_player();
 
-  while(1) {
+  while (1)
+  {
     /* Periodically call the lv_task handler.
      * It could be done in a timer interrupt or an OS task too.*/
     uint32_t sleep_time_ms = lv_timer_handler();
@@ -94,4 +97,3 @@ int main(int argc, char **argv)
 /**********************
  *   STATIC FUNCTIONS
  **********************/
-

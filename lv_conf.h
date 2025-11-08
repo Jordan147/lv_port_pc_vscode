@@ -1001,7 +1001,7 @@
 
 /** Enable ThorVG (vector graphics library) from the src/libs folder.
  *  Requires LV_USE_VECTOR_GRAPHIC */
-#define LV_USE_THORVG_INTERNAL 1 
+#define LV_USE_THORVG_INTERNAL 1
 
 /** Enable ThorVG by assuming that its installed and linked to the project
  *  Requires LV_USE_VECTOR_GRAPHIC */
@@ -1430,6 +1430,13 @@
         #define LV_DEMO_MUSIC_ROUND     0
         #define LV_DEMO_MUSIC_LARGE     0
         #define LV_DEMO_MUSIC_AUTO_PLAY 0
+    #endif
+
+    /** Custom player demo */
+    #define LV_USE_DEMO_PLAYER 1
+    #if LV_USE_DEMO_PLAYER
+        #define LV_DEMO_PLAYER_LARGE 0
+        #define LV_DEMO_PLAYER_AUTO_PLAY 0
     #endif
 
     /** Vector graphic demo */
