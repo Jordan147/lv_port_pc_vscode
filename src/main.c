@@ -347,8 +347,22 @@ static const char *get_media_artist(uint32_t track_id)
  */
 static const char *get_media_genre(uint32_t track_id)
 {
+  static char genre_with_ext[128];
+  
   if (track_id >= media_count)
     return "Unknown Genre";
+  
+  // Get file extension
+  const char *filepath = media_list[track_id].filepath;
+  const char *ext = strrchr(filepath, '.');
+  if (ext != NULL) {
+    ext++; // Skip the dot
+    // Format: "Genre - EXT"
+    snprintf(genre_with_ext, sizeof(genre_with_ext), "%s - %s", 
+             media_list[track_id].genre, ext);
+    return genre_with_ext;
+  }
+  
   return media_list[track_id].genre;
 }
 
@@ -370,6 +384,16 @@ media_type_t get_media_type_by_id(uint32_t track_id)
   if (track_id >= media_count)
     return MEDIA_TYPE_UNKNOWN;
   return media_list[track_id].type;
+}
+
+/**
+ * Get media file path by track ID
+ */
+const char *get_media_filepath_by_id(uint32_t track_id)
+{
+  if (track_id >= media_count)
+    return NULL;
+  return media_list[track_id].filepath;
 }
 
 /**

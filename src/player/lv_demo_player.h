@@ -62,6 +62,7 @@ extern uint32_t player_get_track_length(uint32_t track_id);
 extern uint32_t player_get_track_count(void);
 extern bool player_is_audio_track(uint32_t track_id);
 extern media_type_t get_media_type_by_id(uint32_t track_id);
+extern const char *get_media_filepath_by_id(uint32_t track_id);
 extern void init_player_media_system(void);
 
 /**********************

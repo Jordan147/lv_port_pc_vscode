@@ -9,11 +9,16 @@
 #include "lv_demo_player_main.h"
 #if LV_USE_DEMO_PLAYER
 
+#include <stdio.h>
+#include <string.h>
 #include "lv_demo_player_list.h"
 #include "assets/spectrum_1.h"
 #include "assets/spectrum_2.h"
 #include "assets/spectrum_3.h"
 #include "lvgl_private.h"
+#if LV_USE_GIF
+#include "../../lvgl/src/libs/gif/lv_gif.h"
+#endif
 
 /*********************
  *      DEFINES
@@ -85,6 +90,7 @@ static lv_obj_t *artist_label;
 static lv_obj_t *genre_label;
 static lv_obj_t *time_obj;
 static lv_obj_t *album_image_obj;
+static lv_obj_t *media_image_obj;  // For displaying actual image files
 static lv_obj_t *slider_obj;
 static uint32_t spectrum_i = 0;
 static uint32_t spectrum_i_pause = 0;
@@ -678,6 +684,15 @@ static lv_obj_t *create_spectrum_obj(lv_obj_t *parent)
         lv_obj_set_style_opa(album_image_obj, LV_OPA_TRANSP, 0);
     }
 
+    // Create media image object for displaying actual image files
+    media_image_obj = lv_image_create(obj);
+    lv_obj_set_width(media_image_obj, lv_pct(100));
+    lv_obj_set_height(media_image_obj, lv_pct(100));
+    lv_obj_align(media_image_obj, LV_ALIGN_CENTER, 0, 0);
+    lv_image_set_inner_align(media_image_obj, LV_IMAGE_ALIGN_CONTAIN);  // Best fit: scale to fit container while maintaining aspect ratio
+    lv_obj_add_flag(media_image_obj, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_style_opa(media_image_obj, LV_OPA_TRANSP, 0);  // Initially hidden
+
     return obj;
 }
 
@@ -829,6 +844,13 @@ static void track_load(uint32_t id)
     lv_label_set_text(artist_label, lv_demo_player_get_artist(track_id));
     lv_label_set_text(genre_label, lv_demo_player_get_genre(track_id));
 
+    // Print filename when loading track
+    const char *filepath = get_media_filepath_by_id(track_id);
+    if (filepath)
+    {
+        printf("Loading track %u: %s\n", track_id, filepath);
+    }
+
     media_type_t current_media_type = get_media_type_by_id(track_id);
 
     // Handle different media types - basic visibility control
@@ -845,6 +867,12 @@ static void track_load(uint32_t id)
         {
             lv_obj_set_style_opa(album_image_obj, LV_OPA_COVER, 0);
         }
+        
+        // Hide media image for audio files
+        if (media_image_obj)
+        {
+            lv_obj_set_style_opa(media_image_obj, LV_OPA_TRANSP, 0);
+        }
     }
     else if (current_media_type == MEDIA_TYPE_IMAGE)
     {
@@ -852,11 +880,85 @@ static void track_load(uint32_t id)
         lv_obj_clear_flag(play_obj, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_set_style_opa(play_obj, LV_OPA_30, 0);
 
-        // Hide spectrum and album cover for images
-        lv_obj_set_style_opa(spectrum_obj, LV_OPA_TRANSP, 0);
+        // Show spectrum container for images (it holds media_image_obj)
+        lv_obj_set_style_opa(spectrum_obj, LV_OPA_COVER, 0);
+        
+        // Hide album cover for images
         if (album_image_obj)
         {
             lv_obj_set_style_opa(album_image_obj, LV_OPA_TRANSP, 0);
+        }
+
+        // Load and display the actual image file
+        if (media_image_obj)
+        {
+            const char *filepath = get_media_filepath_by_id(track_id);
+            if (filepath)
+            {
+                // Convert path to LVGL file system format (A:/path/to/file)
+                static char lv_path[512];
+                snprintf(lv_path, sizeof(lv_path), "A:%s", filepath);
+                
+                // Check if file is a GIF
+                size_t len = strlen(filepath);
+                bool is_gif = (len > 4 && 
+                              (strcasecmp(filepath + len - 4, ".gif") == 0));
+                
+                // Get parent before potentially deleting the object
+                lv_obj_t *parent = lv_obj_get_parent(media_image_obj);
+                
+                // Delete old object and create appropriate type
+                lv_obj_del(media_image_obj);
+                
+                if (is_gif)
+                {
+#if LV_USE_GIF
+                    // For GIF files, use lv_gif widget
+                    media_image_obj = lv_gif_create(parent);
+                    lv_obj_set_width(media_image_obj, lv_pct(100));
+                    lv_obj_set_height(media_image_obj, lv_pct(100));
+                    lv_obj_align(media_image_obj, LV_ALIGN_CENTER, 0, 0);
+                    lv_gif_set_src(media_image_obj, lv_path);
+                    lv_image_set_inner_align(media_image_obj, LV_IMAGE_ALIGN_CONTAIN);  // Scale to fit while maintaining aspect ratio
+                    lv_obj_set_style_opa(media_image_obj, LV_OPA_COVER, 0);
+                    printf("✓ GIF loaded and displayed: %s\n", filepath);
+#else
+                    // GIF not supported, create empty image
+                    media_image_obj = lv_image_create(parent);
+                    lv_obj_set_style_opa(media_image_obj, LV_OPA_TRANSP, 0);
+                    printf("✗ GIF support not enabled: %s\n", filepath);
+#endif
+                }
+                else
+                {
+                    // For regular images (JPG, PNG, BMP), use normal image widget
+                    media_image_obj = lv_image_create(parent);
+                    lv_obj_set_width(media_image_obj, lv_pct(100));
+                    lv_obj_set_height(media_image_obj, lv_pct(100));
+                    lv_obj_align(media_image_obj, LV_ALIGN_CENTER, 0, 0);
+                    lv_image_set_inner_align(media_image_obj, LV_IMAGE_ALIGN_CONTAIN);  // Scale to fit while maintaining aspect ratio
+                    lv_image_set_src(media_image_obj, lv_path);
+                    
+                    // Check if image loaded successfully
+                    const void *src = lv_image_get_src(media_image_obj);
+                    if (src != NULL)
+                    {
+                        // Image loaded successfully, show it
+                        lv_obj_set_style_opa(media_image_obj, LV_OPA_COVER, 0);
+                        printf("✓ Image loaded and displayed: %s\n", filepath);
+                    }
+                    else
+                    {
+                        // Image failed to load
+                        lv_obj_set_style_opa(media_image_obj, LV_OPA_TRANSP, 0);
+                        printf("✗ Image failed to load: %s\n", filepath);
+                    }
+                }
+            }
+            else
+            {
+                lv_obj_set_style_opa(media_image_obj, LV_OPA_TRANSP, 0);
+            }
         }
     }
     else
@@ -870,6 +972,12 @@ static void track_load(uint32_t id)
         if (album_image_obj)
         {
             lv_obj_set_style_opa(album_image_obj, LV_OPA_TRANSP, 0);
+        }
+        
+        // Hide media image for non-image files
+        if (media_image_obj)
+        {
+            lv_obj_set_style_opa(media_image_obj, LV_OPA_TRANSP, 0);
         }
     }
 
@@ -1136,6 +1244,13 @@ static void spectrum_draw_event_cb(lv_event_t *e)
     }
     else if (code == LV_EVENT_DRAW_MAIN_BEGIN)
     {
+        // Don't draw spectrum for non-audio files
+        media_type_t current_media_type = get_media_type_by_id(track_id);
+        if (current_media_type != MEDIA_TYPE_AUDIO)
+        {
+            return;
+        }
+
         lv_obj_t *obj = lv_event_get_target(e);
         lv_layer_t *layer = lv_event_get_layer(e);
 
