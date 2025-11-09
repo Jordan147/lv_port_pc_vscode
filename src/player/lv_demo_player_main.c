@@ -11,6 +11,8 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <stdio.h>
+#include <string.h>
 #include "lv_demo_player_list.h"
 #include "assets/spectrum_1.h"
 #include "assets/spectrum_2.h"
@@ -867,7 +869,7 @@ static void track_load(uint32_t id)
         {
             lv_obj_set_style_opa(album_image_obj, LV_OPA_COVER, 0);
         }
-        
+
         // Hide media image for audio files
         if (media_image_obj)
         {
@@ -882,7 +884,7 @@ static void track_load(uint32_t id)
 
         // Show spectrum container for images (it holds media_image_obj)
         lv_obj_set_style_opa(spectrum_obj, LV_OPA_COVER, 0);
-        
+
         // Hide album cover for images
         if (album_image_obj)
         {
@@ -898,18 +900,18 @@ static void track_load(uint32_t id)
                 // Convert path to LVGL file system format (A:/path/to/file)
                 static char lv_path[512];
                 snprintf(lv_path, sizeof(lv_path), "A:%s", filepath);
-                
+
                 // Check if file is a GIF
                 size_t len = strlen(filepath);
-                bool is_gif = (len > 4 && 
-                              (strcasecmp(filepath + len - 4, ".gif") == 0));
-                
+                bool is_gif = (len > 4 &&
+                               (strcasecmp(filepath + len - 4, ".gif") == 0));
+
                 // Get parent before potentially deleting the object
                 lv_obj_t *parent = lv_obj_get_parent(media_image_obj);
-                
+
                 // Delete old object and create appropriate type
                 lv_obj_del(media_image_obj);
-                
+
                 if (is_gif)
                 {
 #if LV_USE_GIF
@@ -938,7 +940,7 @@ static void track_load(uint32_t id)
                     lv_obj_align(media_image_obj, LV_ALIGN_CENTER, 0, 0);
                     lv_image_set_inner_align(media_image_obj, LV_IMAGE_ALIGN_CONTAIN);  // Scale to fit while maintaining aspect ratio
                     lv_image_set_src(media_image_obj, lv_path);
-                    
+
                     // Check if image loaded successfully
                     const void *src = lv_image_get_src(media_image_obj);
                     if (src != NULL)
@@ -973,7 +975,7 @@ static void track_load(uint32_t id)
         {
             lv_obj_set_style_opa(album_image_obj, LV_OPA_TRANSP, 0);
         }
-        
+
         // Hide media image for non-image files
         if (media_image_obj)
         {
