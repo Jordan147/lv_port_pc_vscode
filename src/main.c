@@ -25,6 +25,7 @@
 #include <SDL.h>
 
 #include "hal/hal.h"
+#include "player/lv_demo_player_main.h"
 
 /*********************
  *      DEFINES
@@ -63,13 +64,8 @@ int main(int argc, char **argv)
   /*Initialize the HAL (display, input devices, tick) for LVGL*/
   sdl_hal_init(320, 480);
 
-  /* Run the default demo */
-  /* To try a different demo or example, replace this with one of: */
-  /* - lv_demo_benchmark(); */
-  /* - lv_demo_stress(); */
-  /* - lv_example_label_1(); */
-  /* - etc. */
-  lv_demo_widgets();
+  /* Run the media player demo */
+  lv_demo_player_main_create(lv_scr_act());
 
   while(1) {
     /* Periodically call the lv_task handler.

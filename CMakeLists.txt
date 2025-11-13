@@ -35,6 +35,7 @@ endif()
 
 # Main include files of the project
 include_directories(${PROJECT_SOURCE_DIR}/main/inc)
+include_directories(${PROJECT_SOURCE_DIR}/src/player)
 
 # Define options for LVGL with default values (OFF)
 option(LV_USE_DRAW_SDL "Use SDL draw unit" OFF)
@@ -65,50 +66,23 @@ add_compile_definitions($<$<BOOL:${LV_USE_FFMPEG}>:LV_USE_FFMPEG=1>)
 add_subdirectory(lvgl)
 target_include_directories(lvgl PUBLIC ${PROJECT_SOURCE_DIR} ${SDL2_INCLUDE_DIRS})
 
-set(MAIN_SOURCES src/mouse_cursor_icon.c src/hal/hal.c)
+# Conditionally include and link FFmpeg libraries if LV_USE_FFMPEG is enabled
+if(LV_USE_FFMPEG)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(FFMPEG REQUIRED libavcodec libavformat libavutil libswscale)
+    target_include_directories(lvgl PUBLIC ${FFMPEG_INCLUDE_DIRS})
+    list(APPEND MAIN_LIBS ${FFMPEG_LIBRARIES})
+endif()
+
+set(MAIN_SOURCES src/mouse_cursor_icon.c src/hal/hal.c src/player/lv_demo_player_main.c)
 set(MAIN_LIBS lvgl lvgl::examples lvgl::demos lvgl::thorvg ${SDL2_LIBRARIES})
 
-# Create the main executable, depending on the FreeRTOS option
+# Add main source depending on FreeRTOS setting
 if(USE_FREERTOS)
     list(APPEND MAIN_SOURCES src/freertos_main.c src/freertos/freertos_posix_port.c ${FREERTOS_SOURCES})
     list(APPEND MAIN_LIBS freertos_config freertos_kernel)
 else()
     list(APPEND MAIN_SOURCES src/main.c)
-endif()
-
-
-if(NOT MSVC)
-    list(APPEND MAIN_LIBS m pthread)
-endif()
-
-# Custom target to run the executable
-add_custom_target(run COMMAND ${EXECUTABLE_OUTPUT_PATH}/main DEPENDS main)
-
-# Conditionally include and link SDL2_image if LV_USE_DRAW_SDL is enabled
-if(LV_USE_DRAW_SDL)
-    set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake")
-    find_package(SDL2_image REQUIRED)
-    target_include_directories(lvgl PUBLIC ${SDL2_IMAGE_INCLUDE_DIRS})
-    list(APPEND MAIN_LIBS ${SDL2_IMAGE_LIBRARIES})
-endif()
-
-# Conditionally include and link libpng if LV_USE_LIBPNG is enabled
-if(LV_USE_LIBPNG)
-    find_package(PNG REQUIRED)
-    target_include_directories(lvgl PUBLIC ${PNG_INCLUDE_DIRS})
-    list(APPEND MAIN_LIBS ${PNG_LIBRARIES})
-endif()
-
-# Conditionally include and link libjpeg-turbo if LV_USE_LIBJPEG_TURBO is enabled
-if(LV_USE_LIBJPEG_TURBO)
-    find_package(JPEG REQUIRED)
-    target_include_directories(lvgl PUBLIC ${JPEG_INCLUDE_DIRS})
-    list(APPEND MAIN_LIBS ${JPEG_LIBRARIES})
-endif()
-
-# Conditionally include and link FFmpeg libraries if LV_USE_FFMPEG is enabled
-if(LV_USE_FFMPEG)
-    list(APPEND MAIN_LIBS avformat avcodec avutil swscale z)
 endif()
 
 # Conditionally include and link FreeType if LV_USE_FREETYPE is enabled
