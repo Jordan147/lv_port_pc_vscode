@@ -1,0 +1,16 @@
+[Warn]	(0.000, +0)	 lv_init: Memory integrity checks are enabled via LV_USE_ASSERT_MEM_INTEGRITY which makes LVGL much slower lv_init.c:326
+[Warn]	(0.000, +0)	 lv_init: Object sanity checks are enabled via LV_USE_ASSERT_OBJ which makes LVGL much slower lv_init.c:330
+[Warn]	(0.000, +0)	 lv_init: Style sanity checks are enabled that uses more RAM lv_init.c:334
+[User]	(0.136, +136)	 lv_demo_player_main_create: Starting media player demo lv_demo_player_main.c:75
+[User]	(0.136, +0)	 lv_demo_player_main_create: POSIX filesystem ready: 1 lv_demo_player_main.c:79
+[User]	(0.136, +0)	 lv_demo_player_main_create: File opened successfully lv_demo_player_main.c:85
+[User]	(0.136, +0)	 create_media_thumbnail: Loading image: P:/opt/media/兔媽媽.jpg lv_demo_player_main.c:209
+[User]	(0.137, +1)	 create_media_thumbnail: Loading image: P:/opt/media/47x48.png lv_demo_player_main.c:209
+[User]	(0.137, +0)	 create_media_thumbnail: Loading image: P:/opt/media/IMG_3269.jpg lv_demo_player_main.c:209
+[User]	(0.137, +0)	 create_media_thumbnail: Loading image: P:/opt/media/241x148.png lv_demo_player_main.c:209
+[User]	(0.138, +1)	 create_media_thumbnail: Loading GIF: P:/opt/media/800x1280.gif lv_demo_player_main.c:205
+[User]	(0.138, +0)	 create_media_thumbnail: Loading image: P:/opt/media/Jordan玩偶.jpg lv_demo_player_main.c:209
+[User]	(0.138, +0)	 create_media_thumbnail: Loading GIF: P:/opt/media/320x480.gif lv_demo_player_main.c:205
+[User]	(0.138, +0)	 create_media_thumbnail: Loading GIF: P:/opt/media/240x320.gif lv_demo_player_main.c:205
+[User]	(0.138, +0)	 create_media_thumbnail: Loading GIF: P:/opt/media/800x600.gif lv_demo_player_main.c:205
+[User]	(0.139, +1)	 create_media_thumbnail: Loading image: P:/opt/media/225x111.png lv_demo_player_main.c:209

@@ -627,7 +627,7 @@
 /* Demonstrate special features */
 #define LV_FONT_MONTSERRAT_28_COMPRESSED    1
 #define LV_FONT_DEJAVU_16_PERSIAN_HEBREW    1
-#define LV_FONT_SOURCE_HAN_SANS_SC_14_CJK   0  /**< 1338 most common CJK radicals */
+#define LV_FONT_SOURCE_HAN_SANS_SC_14_CJK   1  /**< 1338 most common CJK radicals */
 #define LV_FONT_SOURCE_HAN_SANS_SC_16_CJK   1
 
 /** Pixel perfect monospaced fonts */
@@ -858,7 +858,7 @@
 /** Setting a default driver letter allows skipping the driver prefix in filepaths.
  *  Documentation about how to use the below driver-identifier letters can be found at
  *  https://docs.lvgl.io/master/details/main-modules/fs.html#lv-fs-identifier-letters . */
-#define LV_FS_DEFAULT_DRIVER_LETTER '\0'
+#define LV_FS_DEFAULT_DRIVER_LETTER 'P'
 
 /** API for fopen, fread, etc. */
 #define LV_USE_FS_STDIO 1
@@ -948,7 +948,7 @@
 #define LV_USE_LIBJPEG_TURBO 0
 
 /** GIF decoder library */
-#define LV_USE_GIF 0
+#define LV_USE_GIF 1
 #if LV_USE_GIF
     /** GIF decoder accelerate */
     #define LV_GIF_CACHE_DECODE_DATA 0

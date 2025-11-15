@@ -61,6 +61,9 @@ int main(int argc, char **argv)
   /*Initialize LVGL*/
   lv_init();
 
+  /*Initialize the POSIX filesystem driver*/
+  lv_fs_posix_init();
+
   /*Initialize the HAL (display, input devices, tick) for LVGL*/
   sdl_hal_init(320, 480);
 
@@ -90,4 +93,3 @@ int main(int argc, char **argv)
 /**********************
  *   STATIC FUNCTIONS
  **********************/
-

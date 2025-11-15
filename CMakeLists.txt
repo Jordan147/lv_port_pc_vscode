@@ -71,7 +71,7 @@ if(LV_USE_FFMPEG)
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(FFMPEG REQUIRED libavcodec libavformat libavutil libswscale)
     target_include_directories(lvgl PUBLIC ${FFMPEG_INCLUDE_DIRS})
-    list(APPEND MAIN_LIBS ${FFMPEG_LIBRARIES})
+    list(APPEND MAIN_LIBS /opt/homebrew/lib/libavformat.dylib /opt/homebrew/lib/libavcodec.dylib /opt/homebrew/lib/libswscale.dylib /opt/homebrew/lib/libavutil.dylib)
 endif()
 
 set(MAIN_SOURCES src/mouse_cursor_icon.c src/hal/hal.c src/player/lv_demo_player_main.c)
