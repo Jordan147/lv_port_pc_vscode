@@ -66,6 +66,8 @@ add_compile_definitions($<$<BOOL:${LV_USE_FFMPEG}>:LV_USE_FFMPEG=1>)
 add_subdirectory(lvgl)
 target_include_directories(lvgl PUBLIC ${PROJECT_SOURCE_DIR} ${SDL2_INCLUDE_DIRS})
 
+set(MAIN_LIBS lvgl lvgl::examples lvgl::demos lvgl::thorvg ${SDL2_LIBRARIES})
+
 # Conditionally include and link FFmpeg libraries if LV_USE_FFMPEG is enabled
 if(LV_USE_FFMPEG)
     find_package(PkgConfig REQUIRED)
@@ -74,8 +76,14 @@ if(LV_USE_FFMPEG)
     list(APPEND MAIN_LIBS /opt/homebrew/lib/libavformat.dylib /opt/homebrew/lib/libavcodec.dylib /opt/homebrew/lib/libswscale.dylib /opt/homebrew/lib/libavutil.dylib)
 endif()
 
+# Conditionally include and link PNG if LV_USE_LIBPNG is enabled
+if(LV_USE_LIBPNG)
+    find_package(PNG REQUIRED)
+    target_include_directories(lvgl PUBLIC ${PNG_INCLUDE_DIRS})
+    list(APPEND MAIN_LIBS ${PNG_LIBRARIES})
+endif()
+
 set(MAIN_SOURCES src/mouse_cursor_icon.c src/hal/hal.c src/player/lv_demo_player_main.c)
-set(MAIN_LIBS lvgl lvgl::examples lvgl::demos lvgl::thorvg ${SDL2_LIBRARIES})
 
 # Add main source depending on FreeRTOS setting
 if(USE_FREERTOS)

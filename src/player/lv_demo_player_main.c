@@ -28,6 +28,7 @@
 #define GRID_COLS 4
 #define GRID_ROWS 3
 #define MAX_MEDIA_FILES 100
+#define MAX_GIF_SIZE (256 * 1024) // 256KB limit for GIF files
 
 /**********************
  *      TYPEDEFS
@@ -51,8 +52,11 @@ static void fullscreen_click_event_cb(lv_event_t *e);
 static void show_fullscreen_media(const char *filepath, bool is_video);
 static bool is_gif_file(const char *filename);
 static void hide_fullscreen_media(void);
+static void cleanup_media_files(void);
 static bool is_video_file(const char *filename);
 static bool is_image_file(const char *filename);
+static void load_custom_font(void);
+static void scale_image_to_fit(lv_obj_t * img, int32_t target_w, int32_t target_h);
 
 /**********************
  *  STATIC VARIABLES
@@ -62,6 +66,7 @@ static int media_count = 0;
 static lv_obj_t *fullscreen_container = NULL;
 static lv_obj_t *fullscreen_image = NULL;
 static lv_obj_t *fullscreen_video = NULL;
+static lv_font_t *font_cjk = NULL;
 
 /**********************
  *      MACROS
@@ -91,6 +96,9 @@ lv_obj_t *lv_demo_player_main_create(lv_obj_t *parent)
     {
         LV_LOG_USER("Failed to open file: %d", res);
     }
+
+    // Load custom font
+    load_custom_font();
 
     // Scan media files
     scan_media_files();
@@ -169,12 +177,39 @@ static void scan_media_files(void)
             if (ent->d_name[0] == '.')
                 continue; // Skip hidden files
 
-            if (is_video_file(ent->d_name) || is_image_file(ent->d_name))
+            bool is_video = is_video_file(ent->d_name);
+            bool is_image = is_image_file(ent->d_name);
+            
+            if (is_video) {
+                LV_LOG_USER("Found video file: %s", ent->d_name);
+            }
+            
+            if (is_video || is_image)
             {
                 snprintf(filepath, sizeof(filepath), "%s/%s", MEDIA_PATH, ent->d_name);
 
+                // Check file size for GIF files
+                if (is_gif_file(ent->d_name))
+                {
+                    struct stat st;
+                    if (stat(filepath, &st) == 0 && st.st_size > MAX_GIF_SIZE)
+                    {
+                        LV_LOG_WARN("Skipping large GIF file: %s (%lld bytes)", ent->d_name, (long long)st.st_size);
+                        continue; // Skip large GIF files
+                    }
+                }
+
                 media_files[media_count].filename = strdup(ent->d_name);
                 media_files[media_count].filepath = strdup(filepath);
+                
+                if (media_files[media_count].filename == NULL || media_files[media_count].filepath == NULL) {
+                    LV_LOG_ERROR("Failed to allocate memory for media file: %s", ent->d_name);
+                    // Free any allocated memory
+                    if (media_files[media_count].filename) free(media_files[media_count].filename);
+                    if (media_files[media_count].filepath) free(media_files[media_count].filepath);
+                    continue; // Skip this file
+                }
+                
                 media_files[media_count].is_video = is_video_file(ent->d_name);
                 media_files[media_count].is_gif = is_gif_file(ent->d_name);
                 media_count++;
@@ -198,46 +233,198 @@ static void create_media_thumbnail(lv_obj_t *parent, media_file_t *media, int in
     lv_obj_set_grid_cell(thumb_cont, LV_GRID_ALIGN_CENTER, col, 1, LV_GRID_ALIGN_CENTER, row, 1);
 
     // Create image or video thumbnail
-    lv_obj_t *img = lv_image_create(thumb_cont);
+    lv_obj_t *img;
+    
+    if (media->is_gif)
+    {
+        // Use lv_gif for GIF files
+        img = lv_gif_create(thumb_cont);
+    }
+    else
+    {
+        // Use lv_image for other formats
+        img = lv_image_create(thumb_cont);
+    }
+    
+    if (img == NULL) {
+        LV_LOG_ERROR("Failed to create image widget for %s", media->filename);
+        return;
+    }
+    
     lv_obj_center(img);
 
     if (media->is_video)
     {
-        // For video files, try to load first frame or use a video icon
+        LV_LOG_USER("Processing video thumbnail: %s", media->filename);
+#if LV_USE_FFMPEG
+        // Use FFmpeg player to display video thumbnail
+        lv_obj_delete(img); // Remove the placeholder image
+        lv_obj_t *player = lv_ffmpeg_player_create(thumb_cont);
+        if (player == NULL) {
+            LV_LOG_ERROR("Failed to create ffmpeg player for video %s", media->filename);
+            // fallback to icon
+            img = lv_image_create(thumb_cont);
+            lv_image_set_src(img, LV_SYMBOL_VIDEO);
+            lv_obj_set_style_text_color(img, lv_color_white(), 0);
+            lv_obj_set_style_text_font(img, &lv_font_source_han_sans_sc_16_cjk, 0);
+            lv_obj_set_size(img, THUMBNAIL_SIZE - 10, THUMBNAIL_SIZE - 10);
+            lv_obj_center(img);
+        } else {
+            LV_LOG_USER("Setting video source: %s", media->filepath);
+            lv_result_t rr = lv_ffmpeg_player_set_src(player, media->filepath);
+            if (rr != LV_RESULT_OK) {
+                LV_LOG_ERROR("ffmpeg failed to open video %s (result: %d)", media->filepath, rr);
+                lv_obj_delete(player);
+                // fallback to icon
+                img = lv_image_create(thumb_cont);
+                lv_image_set_src(img, LV_SYMBOL_VIDEO);
+                lv_obj_set_style_text_color(img, lv_color_white(), 0);
+                lv_obj_set_style_text_font(img, &lv_font_source_han_sans_sc_16_cjk, 0);
+                lv_obj_set_size(img, THUMBNAIL_SIZE - 10, THUMBNAIL_SIZE - 10);
+                lv_obj_center(img);
+            } else {
+                LV_LOG_USER("Video source set successfully, starting playback for thumbnail");
+                // Size player to thumbnail
+                lv_obj_set_size(player, THUMBNAIL_SIZE - 10, THUMBNAIL_SIZE - 10);
+                lv_obj_center(player);
+                // Try to use CONTAIN alignment for video player
+                lv_image_set_inner_align(player, LV_IMAGE_ALIGN_CONTAIN);
+                
+                // Start playing to show video content (will show frames)
+                lv_ffmpeg_player_set_cmd(player, LV_FFMPEG_PLAYER_CMD_START);
+                // Mute audio for thumbnail
+                // lv_ffmpeg_player_set_cmd(player, LV_FFMPEG_PLAYER_CMD_VOLUME_MUTE);
+                img = player; // Store for later reference
+            }
+        }
+#else
+        // No FFmpeg: use static icon
         lv_image_set_src(img, LV_SYMBOL_VIDEO);
         lv_obj_set_style_text_color(img, lv_color_white(), 0);
-        lv_obj_set_style_text_font(img, &lv_font_source_han_sans_sc_16_cjk, 0);
+        lv_obj_set_style_text_font(img, font_cjk, 0);
+        lv_obj_set_size(img, THUMBNAIL_SIZE - 10, THUMBNAIL_SIZE - 10);
+#endif
     }
     else
     {
         // For all image formats including GIF, load the actual image
-        char prefixed_path[PATH_MAX + 3];                                      // +3 for "P:" and null terminator
-        snprintf(prefixed_path, sizeof(prefixed_path), "%s", media->filepath); // Try without drive letter
-
+        char prefixed_path[PATH_MAX + 3]; // +3 for "P:" and null terminator
+        snprintf(prefixed_path, sizeof(prefixed_path), "P:%s", media->filepath);
+        
         if (media->is_gif)
         {
-            // Use lv_gif for GIF files
-            LV_LOG_USER("Loading GIF: %s", prefixed_path);
+            // Try to use lv_gif for GIF files first
+            LV_LOG_USER("Loading GIF (lv_gif): %s", prefixed_path);
+            lv_gif_set_color_format(img, LV_COLOR_FORMAT_ARGB8888);
             lv_gif_set_src(img, prefixed_path);
+
+            // If GIF decoder failed or not loaded, fall back to ffmpeg player (if available)
+            if (!lv_gif_is_loaded(img)) {
+                LV_LOG_WARN("lv_gif couldn't load %s, falling back to FFmpeg if available", prefixed_path);
+                lv_obj_delete(img);
+                img = NULL;
+
+#if LV_USE_FFMPEG
+                // Create a small ffmpeg player to act as thumbnail for GIF
+                lv_obj_t *player = lv_ffmpeg_player_create(thumb_cont);
+                if (player == NULL) {
+                    LV_LOG_ERROR("Failed to create ffmpeg player for GIF %s", media->filename);
+                    // fallback to placeholder
+                    img = lv_image_create(thumb_cont);
+                    lv_image_set_src(img, LV_SYMBOL_IMAGE);
+                    lv_obj_set_style_text_color(img, lv_color_white(), 0);
+                    lv_obj_set_style_text_font(img, font_cjk, 0);
+                    lv_obj_set_size(img, THUMBNAIL_SIZE - 10, THUMBNAIL_SIZE - 10);
+                    lv_obj_center(img);
+                } else {
+                    // Pass the filesystem path (ffmpeg uses POSIX file paths)
+                    lv_result_t rr = lv_ffmpeg_player_set_src(player, media->filepath);
+                    if (rr != LV_RESULT_OK) {
+                        LV_LOG_ERROR("ffmpeg failed to open GIF %s", media->filepath);
+                        lv_obj_delete(player);
+                        // fallback to placeholder
+                        img = lv_image_create(thumb_cont);
+                        lv_image_set_src(img, LV_SYMBOL_IMAGE);
+                        lv_obj_set_style_text_color(img, lv_color_white(), 0);
+                        lv_obj_set_style_text_font(img, font_cjk, 0);
+                        lv_obj_set_size(img, THUMBNAIL_SIZE - 10, THUMBNAIL_SIZE - 10);
+                        lv_obj_center(img);
+                    } else {
+                        // Size the player to thumbnail and start playback
+                        lv_obj_set_size(player, THUMBNAIL_SIZE - 10, THUMBNAIL_SIZE - 10);
+                        lv_obj_center(player);
+                        lv_image_set_inner_align(player, LV_IMAGE_ALIGN_CONTAIN);
+                        lv_ffmpeg_player_set_auto_restart(player, true);
+                        lv_ffmpeg_player_set_cmd(player, LV_FFMPEG_PLAYER_CMD_START);
+                        // store the player as the img variable so later code that expects 'img' can continue
+                        img = player;
+                    }
+                }
+#else
+                // No ffmpeg available: fallback to static placeholder
+                img = lv_image_create(thumb_cont);
+                lv_image_set_src(img, LV_SYMBOL_IMAGE);
+                lv_obj_set_style_text_color(img, lv_color_white(), 0);
+                lv_obj_set_style_text_font(img, font_cjk, 0);
+                lv_obj_set_size(img, THUMBNAIL_SIZE - 10, THUMBNAIL_SIZE - 10);
+                lv_obj_center(img);
+#endif
+            } else {
+                // GIF loaded successfully
+                scale_image_to_fit(img, THUMBNAIL_SIZE - 10, THUMBNAIL_SIZE - 10);
+            }
         }
         else
         {
             // Use lv_image for other formats
             LV_LOG_USER("Loading image: %s", prefixed_path);
             lv_image_set_src(img, prefixed_path);
-            // Set to maintain aspect ratio and fully fill container
-            lv_image_set_inner_align(img, LV_IMAGE_ALIGN_STRETCH);
+            
+            // Check if image loaded successfully by checking source dimensions
+            int32_t src_width = lv_image_get_src_width(img);
+            int32_t src_height = lv_image_get_src_height(img);
+            if (src_width <= 0 || src_height <= 0) {
+                LV_LOG_ERROR("Failed to load image %s (dimensions: %dx%d), using placeholder", prefixed_path, src_width, src_height);
+                // Replace with placeholder
+                lv_image_set_src(img, LV_SYMBOL_IMAGE);
+                lv_obj_set_style_text_color(img, lv_color_white(), 0);
+                lv_obj_set_style_text_font(img, font_cjk, 0);
+            } else {
+                // Use manual scaling to ensure it fits
+                scale_image_to_fit(img, THUMBNAIL_SIZE - 10, THUMBNAIL_SIZE - 10);
+            }
         }
-        lv_obj_set_size(img, THUMBNAIL_SIZE - 10, THUMBNAIL_SIZE - 10);
+    }
+
+    // Ensure the image/player does not steal click events from the container
+    if (img) {
+        lv_obj_remove_flag(img, LV_OBJ_FLAG_CLICKABLE);
     }
 
     // Create filename label
     lv_obj_t *label = lv_label_create(thumb_cont);
-    char short_name[32];
-    strncpy(short_name, media->filename, 31);
-    short_name[31] = '\0';
+    if (label == NULL) {
+        LV_LOG_ERROR("Failed to create label for %s", media->filename);
+        // Continue without label rather than crashing
+        return;
+    }
 
-    // Truncate long filenames
+    // Use CJK font for label
+    lv_obj_set_style_text_font(label, font_cjk, 0);
+
+    // Truncate filename if too long for display
+    char short_name[64]; // Increase buffer size
+    size_t filename_len = strlen(media->filename);
+    if (filename_len >= sizeof(short_name)) {
+        // Truncate very long filenames
+        strncpy(short_name, media->filename, sizeof(short_name) - 4);
+        short_name[sizeof(short_name) - 4] = '\0';
+        strcat(short_name, "...");
+    } else {
+        strcpy(short_name, media->filename);
+    }
+
+    // Truncate long filenames for display
     if (strlen(short_name) > 15)
     {
         short_name[12] = '.';
@@ -246,12 +433,13 @@ static void create_media_thumbnail(lv_obj_t *parent, media_file_t *media, int in
         short_name[15] = '\0';
     }
 
-    lv_label_set_text(label, short_name);
-    lv_obj_set_style_text_color(label, lv_color_white(), 0);
-    lv_obj_set_style_text_font(label, &lv_font_source_han_sans_sc_16_cjk, 0);
+    lv_label_set_text(label, media->filename);
+    lv_obj_set_width(label, THUMBNAIL_SIZE - 10);
+    lv_label_set_long_mode(label, LV_LABEL_LONG_SCROLL_CIRCULAR);
     lv_obj_align(label, LV_ALIGN_BOTTOM_MID, 0, -5);
+    lv_obj_remove_flag(label, LV_OBJ_FLAG_CLICKABLE);
 
-    // Store media info in user data
+    // Store media info in user data for click event
     lv_obj_set_user_data(thumb_cont, media);
 
     // Add click event
@@ -288,51 +476,110 @@ static void show_fullscreen_media(const char *filepath, bool is_video)
 #if LV_USE_FFMPEG
         // Create FFmpeg video player
         fullscreen_video = lv_ffmpeg_player_create(fullscreen_container);
-        lv_ffmpeg_player_set_src(fullscreen_video, filepath);
-        lv_obj_center(fullscreen_video);
-
-        // Auto-resize to fit screen while maintaining aspect ratio
-        lv_ffmpeg_player_set_auto_restart(fullscreen_video, true);
+        if (fullscreen_video == NULL) {
+            LV_LOG_ERROR("Failed to create ffmpeg player for %s", filepath);
+        } else {
+            lv_result_t r = lv_ffmpeg_player_set_src(fullscreen_video, filepath);
+            if (r != LV_RESULT_OK) {
+                LV_LOG_ERROR("lv_ffmpeg_player_set_src failed for %s (result: %d)", filepath, r);
+                lv_obj_delete(fullscreen_video);
+                fullscreen_video = NULL;
+            } else {
+                LV_LOG_USER("Fullscreen video source set, starting playback");
+                // Set player size to container to let the player render into this area.
+                lv_coord_t screen_w = lv_display_get_horizontal_resolution(NULL);
+                lv_coord_t screen_h = lv_display_get_vertical_resolution(NULL);
+                lv_obj_set_size(fullscreen_video, screen_w, screen_h);
+                lv_obj_center(fullscreen_video);
+                // Try CONTAIN for video
+                lv_image_set_inner_align(fullscreen_video, LV_IMAGE_ALIGN_CONTAIN);
+                // Auto-restart so looped playback continues
+                lv_ffmpeg_player_set_auto_restart(fullscreen_video, true);
+                // Start playback
+                lv_ffmpeg_player_set_cmd(fullscreen_video, LV_FFMPEG_PLAYER_CMD_START);
+            }
+        }
 #endif
     }
     else
     {
+        // Create image/GIF viewer for all formats
+        char prefixed_path[PATH_MAX + 3]; // +3 for "P:" and null terminator
+        snprintf(prefixed_path, sizeof(prefixed_path), "P:%s", filepath);
+        
         if (is_gif)
         {
-            // For GIF files, show a message since GIF is not supported
-            lv_obj_t *gif_message = lv_label_create(fullscreen_container);
-            lv_label_set_text(gif_message, "GIF 文件不支持\n\n不支持的格式");
-            lv_obj_set_style_text_color(gif_message, lv_color_white(), 0);
-            lv_obj_set_style_text_font(gif_message, &lv_font_source_han_sans_sc_16_cjk, 0);
-            lv_obj_set_style_text_align(gif_message, LV_TEXT_ALIGN_CENTER, 0);
-            lv_obj_center(gif_message);
+            // Try lv_gif first for fullscreen
+            fullscreen_image = lv_gif_create(fullscreen_container);
+            if (fullscreen_image == NULL) {
+                LV_LOG_ERROR("Failed to create fullscreen GIF widget for %s", filepath);
+            } else {
+                lv_gif_set_color_format(fullscreen_image, LV_COLOR_FORMAT_ARGB8888);
+                lv_gif_set_src(fullscreen_image, prefixed_path);
+                if (!lv_gif_is_loaded(fullscreen_image)) {
+                    LV_LOG_WARN("lv_gif couldn't load fullscreen GIF %s, falling back to FFmpeg", prefixed_path);
+                    lv_obj_delete(fullscreen_image);
+                    fullscreen_image = NULL;
+                }
+            }
+
+            if (fullscreen_image == NULL) {
+#if LV_USE_FFMPEG
+                // Use ffmpeg player to play the GIF as a video for fullscreen
+                fullscreen_video = lv_ffmpeg_player_create(fullscreen_container);
+                if (fullscreen_video == NULL) {
+                    LV_LOG_ERROR("Failed to create ffmpeg player for fullscreen GIF %s", filepath);
+                } else {
+                    lv_result_t r = lv_ffmpeg_player_set_src(fullscreen_video, filepath);
+                    if (r != LV_RESULT_OK) {
+                        LV_LOG_ERROR("lv_ffmpeg_player_set_src failed for GIF %s (result: %d)", filepath, r);
+                        lv_obj_delete(fullscreen_video);
+                        fullscreen_video = NULL;
+                    } else {
+                        lv_coord_t screen_w = lv_display_get_horizontal_resolution(NULL);
+                        lv_coord_t screen_h = lv_display_get_vertical_resolution(NULL);
+                        lv_obj_set_size(fullscreen_video, screen_w, screen_h);
+                        lv_obj_center(fullscreen_video);
+                        lv_image_set_inner_align(fullscreen_video, LV_IMAGE_ALIGN_CONTAIN);
+                        lv_ffmpeg_player_set_auto_restart(fullscreen_video, true);
+                        lv_ffmpeg_player_set_cmd(fullscreen_video, LV_FFMPEG_PLAYER_CMD_START);
+                    }
+                }
+#endif
+            } else {
+                // lv_gif succeeded: size it to screen
+                lv_coord_t screen_w = lv_display_get_horizontal_resolution(NULL);
+                lv_coord_t screen_h = lv_display_get_vertical_resolution(NULL);
+                scale_image_to_fit(fullscreen_image, screen_w, screen_h);
+            }
         }
         else
         {
-            // Create image viewer
+            // Create regular image viewer
             fullscreen_image = lv_image_create(fullscreen_container);
-            char prefixed_path[PATH_MAX + 3]; // +3 for "P:" and null terminator
-            snprintf(prefixed_path, sizeof(prefixed_path), "P:%s", filepath);
+            if (fullscreen_image == NULL) {
+                LV_LOG_ERROR("Failed to create fullscreen image widget for %s", filepath);
+                return;
+            }
             lv_image_set_src(fullscreen_image, prefixed_path);
-            lv_obj_center(fullscreen_image);
-
-            // Set size mode to maintain aspect ratio
-            lv_image_set_inner_align(fullscreen_image, LV_IMAGE_ALIGN_CONTAIN);
-
-            // Scale to fit screen
+            
+            // Check if image loaded successfully
+            int32_t src_width = lv_image_get_src_width(fullscreen_image);
+            int32_t src_height = lv_image_get_src_height(fullscreen_image);
+            LV_LOG_USER("Fullscreen image %s dimensions: %dx%d", filepath, src_width, src_height);
+            if (src_width <= 0 || src_height <= 0) {
+                LV_LOG_ERROR("Failed to load fullscreen image %s (dimensions: %dx%d)", prefixed_path, src_width, src_height);
+                lv_obj_delete(fullscreen_image);
+                fullscreen_image = NULL;
+                return;
+            }
+            
+            // Get screen dimensions
             lv_coord_t screen_w = lv_display_get_horizontal_resolution(NULL);
             lv_coord_t screen_h = lv_display_get_vertical_resolution(NULL);
-            lv_coord_t img_w = lv_image_get_src_width(fullscreen_image);
-            lv_coord_t img_h = lv_image_get_src_height(fullscreen_image);
-
-            if (img_w > 0 && img_h > 0)
-            {
-                float scale_w = (float)screen_w / img_w;
-                float scale_h = (float)screen_h / img_h;
-                float scale = LV_MIN(scale_w, scale_h);
-
-                lv_image_set_scale(fullscreen_image, (int)(scale * 256));
-            }
+            
+            // Use manual scaling to ensure it fits
+            scale_image_to_fit(fullscreen_image, screen_w, screen_h);
         }
     }
 
@@ -345,58 +592,104 @@ static void fullscreen_click_event_cb(lv_event_t *e)
     hide_fullscreen_media();
 }
 
+static void cleanup_media_files(void)
+{
+    for (int i = 0; i < media_count; i++) {
+        if (media_files[i].filename) {
+            free(media_files[i].filename);
+            media_files[i].filename = NULL;
+        }
+        if (media_files[i].filepath) {
+            free(media_files[i].filepath);
+            media_files[i].filepath = NULL;
+        }
+    }
+    media_count = 0;
+}
+
+static void load_custom_font(void)
+{
+#if LV_USE_TINY_TTF && LV_TINY_TTF_FILE_SUPPORT
+    // Try to load a system font that supports Traditional Chinese
+    // macOS common font path
+    const char * font_path = "/System/Library/Fonts/Supplemental/Arial Unicode.ttf";
+    
+    // Check if file exists using POSIX fopen (since we use P: drive for LVGL but this is direct check)
+    // Actually, lv_tiny_ttf_create_file uses LVGL FS.
+    // We need to map it. "P:/System/Library/Fonts/Supplemental/Arial Unicode.ttf"
+    
+    font_cjk = lv_tiny_ttf_create_file("P:/System/Library/Fonts/Supplemental/Arial Unicode.ttf", 16);
+    
+    if (font_cjk == NULL) {
+        LV_LOG_WARN("Failed to load Arial Unicode.ttf, trying PingFang.ttc");
+        // PingFang might not work as it is a collection, but worth a try if supported
+        font_cjk = lv_tiny_ttf_create_file("P:/System/Library/Fonts/PingFang.ttc", 16);
+    }
+    
+    if (font_cjk == NULL) {
+        LV_LOG_WARN("Failed to load system fonts, falling back to built-in font");
+    } else {
+        LV_LOG_USER("Successfully loaded custom CJK font");
+    }
+#else
+    LV_LOG_WARN("TinyTTF file support not enabled");
+#endif
+
+    if (font_cjk == NULL) {
+        // Fallback to built-in SC font
+        font_cjk = &lv_font_source_han_sans_sc_16_cjk;
+    }
+}
+
+static void scale_image_to_fit(lv_obj_t * img, int32_t target_w, int32_t target_h) {
+    int32_t src_w = lv_image_get_src_width(img);
+    int32_t src_h = lv_image_get_src_height(img);
+    
+    if (src_w <= 0 || src_h <= 0) return;
+    
+    // Calculate scale factor (256 = 100%)
+    // We want to fit within target_w x target_h while maintaining aspect ratio
+    
+    int32_t scale_w = (target_w * 256) / src_w;
+    int32_t scale_h = (target_h * 256) / src_h;
+    
+    // Use the smaller scale to ensure it fits both dimensions
+    int32_t scale = (scale_w < scale_h) ? scale_w : scale_h;
+    
+    lv_image_set_scale(img, scale);
+    lv_image_set_inner_align(img, LV_IMAGE_ALIGN_CENTER);
+}
+
 static void hide_fullscreen_media(void)
 {
-    if (fullscreen_video)
-    {
-        lv_obj_delete(fullscreen_video);
-        fullscreen_video = NULL;
-    }
-
-    if (fullscreen_image)
-    {
-        lv_obj_delete(fullscreen_image);
-        fullscreen_image = NULL;
-    }
-
-    if (fullscreen_container)
-    {
+    if (fullscreen_container) {
         lv_obj_delete(fullscreen_container);
         fullscreen_container = NULL;
+        fullscreen_image = NULL;
+        fullscreen_video = NULL;
     }
 }
 
 static bool is_video_file(const char *filename)
 {
     const char *ext = strrchr(filename, '.');
-    if (!ext)
-        return false;
-
-    return (strcasecmp(ext, ".mp4") == 0 ||
-            strcasecmp(ext, ".avi") == 0 ||
-            strcasecmp(ext, ".mkv") == 0 ||
-            strcasecmp(ext, ".mov") == 0 ||
-            strcasecmp(ext, ".wmv") == 0);
+    if (!ext) return false;
+    return (strcasecmp(ext, ".mp4") == 0 || strcasecmp(ext, ".avi") == 0 || 
+            strcasecmp(ext, ".mkv") == 0 || strcasecmp(ext, ".mov") == 0);
 }
 
 static bool is_image_file(const char *filename)
 {
     const char *ext = strrchr(filename, '.');
-    if (!ext)
-        return false;
-
-    return (strcasecmp(ext, ".jpg") == 0 ||
-            strcasecmp(ext, ".jpeg") == 0 ||
-            strcasecmp(ext, ".png") == 0 ||
-            strcasecmp(ext, ".bmp") == 0 ||
+    if (!ext) return false;
+    return (strcasecmp(ext, ".png") == 0 || strcasecmp(ext, ".jpg") == 0 || 
+            strcasecmp(ext, ".jpeg") == 0 || strcasecmp(ext, ".bmp") == 0 ||
             strcasecmp(ext, ".gif") == 0);
 }
 
 static bool is_gif_file(const char *filename)
 {
     const char *ext = strrchr(filename, '.');
-    if (!ext)
-        return false;
-
-    return strcasecmp(ext, ".gif") == 0;
+    if (!ext) return false;
+    return (strcasecmp(ext, ".gif") == 0);
 }
