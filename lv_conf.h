@@ -68,7 +68,7 @@
 
 #if LV_USE_STDLIB_MALLOC == LV_STDLIB_BUILTIN
     /** Size of memory available for `lv_malloc()` in bytes (>= 2kB) */
-    #define LV_MEM_SIZE (1024 * 1024)
+    #define LV_MEM_SIZE (64 * 1024 * 1024)
 
     /** Size of the memory expand for `lv_malloc()` in bytes */
     #define LV_MEM_POOL_EXPAND_SIZE 0
@@ -499,7 +499,7 @@
 // Enable image decoder cache. Set to a non-zero value (bytes) to allow decoders
 // like lodepng to keep decoded pixel buffers in memory. This reduces repeated
 // reallocations and improves stability when showing many or large images.
-#define LV_CACHE_DEF_SIZE       (8 * 1024 * 1024) /* 8 MB */
+#define LV_CACHE_DEF_SIZE       (64 * 1024 * 1024) /* 64 MB */
 
 /** Default number of image header cache entries. The cache is used to store the headers of images
  *  The main logic is like `LV_CACHE_DEF_SIZE` but for image headers. */
