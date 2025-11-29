@@ -16,6 +16,8 @@
 #include <limits.h> // For PATH_MAX
 #include <signal.h>
 #include <sys/wait.h>
+#include <signal.h>
+#include <sys/wait.h>
 #include "lvgl.h"
 
 #if LV_USE_FFMPEG
@@ -44,53 +46,60 @@ typedef struct
     bool is_audio;
 } media_file_t;
 
-typedef struct {
+typedef struct
+{
     lv_image_dsc_t dsc;
-    void * data;
+    void *data;
 } bitmap_wrapper_t;
 
-static void bitmap_free_cb(lv_event_t * e) {
-    bitmap_wrapper_t * bmp = lv_event_get_user_data(e);
-    if (bmp) {
-        if (bmp->data) free(bmp->data);
+static void bitmap_free_cb(lv_event_t *e)
+{
+    bitmap_wrapper_t *bmp = lv_event_get_user_data(e);
+    if (bmp)
+    {
+        if (bmp->data)
+            free(bmp->data);
         free(bmp);
     }
 }
 
-static bitmap_wrapper_t * decode_jpg_to_bitmap(const char * path) {
+static bitmap_wrapper_t *decode_jpg_to_bitmap(const char *path)
+{
     lv_image_header_t header;
-    if (lv_image_decoder_get_info(path, &header) != LV_RESULT_OK) {
+    if (lv_image_decoder_get_info(path, &header) != LV_RESULT_OK)
+    {
         LV_LOG_ERROR("Failed to get info for %s", path);
         return NULL;
     }
-    
+
     int32_t w = header.w;
     int32_t h = header.h;
-    
+
     size_t buf_size = w * h * 4;
-    void * buf = malloc(buf_size);
-    if (!buf) {
+    void *buf = malloc(buf_size);
+    if (!buf)
+    {
         LV_LOG_ERROR("OOM for JPG decode");
         return NULL;
     }
-    
-    lv_obj_t * canvas = lv_canvas_create(lv_screen_active());
+
+    lv_obj_t *canvas = lv_canvas_create(lv_screen_active());
     lv_canvas_set_buffer(canvas, buf, w, h, LV_COLOR_FORMAT_ARGB8888);
-    
+
     lv_draw_image_dsc_t draw_dsc;
     lv_draw_image_dsc_init(&draw_dsc);
     draw_dsc.src = path;
-    
+
     lv_layer_t layer;
     lv_canvas_init_layer(canvas, &layer);
-    
+
     lv_area_t coords = {0, 0, w - 1, h - 1};
     lv_draw_image(&layer, &draw_dsc, &coords);
-    
+
     lv_canvas_finish_layer(canvas, &layer);
     lv_obj_delete(canvas);
-    
-    bitmap_wrapper_t * bmp = malloc(sizeof(bitmap_wrapper_t));
+
+    bitmap_wrapper_t *bmp = malloc(sizeof(bitmap_wrapper_t));
     bmp->data = buf;
     memset(&bmp->dsc, 0, sizeof(lv_image_dsc_t));
     bmp->dsc.header.cf = LV_COLOR_FORMAT_ARGB8888;
@@ -99,61 +108,71 @@ static bitmap_wrapper_t * decode_jpg_to_bitmap(const char * path) {
     bmp->dsc.header.stride = w * 4;
     bmp->dsc.data = buf;
     bmp->dsc.data_size = buf_size;
-    
+
     return bmp;
 }
 
-static bitmap_wrapper_t * create_thumbnail_bitmap(bitmap_wrapper_t * src, int32_t target_w, int32_t target_h) {
-    if (!src || !src->data) return NULL;
-    
+static bitmap_wrapper_t *create_thumbnail_bitmap(bitmap_wrapper_t *src, int32_t target_w, int32_t target_h)
+{
+    if (!src || !src->data)
+        return NULL;
+
     int32_t src_w = src->dsc.header.w;
     int32_t src_h = src->dsc.header.h;
-    uint8_t * src_buf = (uint8_t *)src->data;
-    
+    uint8_t *src_buf = (uint8_t *)src->data;
+
     size_t dst_size = target_w * target_h * 4;
-    void * dst_buf = malloc(dst_size);
-    if (!dst_buf) return NULL;
-    
+    void *dst_buf = malloc(dst_size);
+    if (!dst_buf)
+        return NULL;
+
     // Fill with opaque black (ARGB8888: A=FF, R=0, G=0, B=0)
     // In Little Endian 32-bit: 0xFF000000
-    uint32_t * dst_pixels = (uint32_t *)dst_buf;
-    for (int i = 0; i < target_w * target_h; i++) {
+    uint32_t *dst_pixels = (uint32_t *)dst_buf;
+    for (int i = 0; i < target_w * target_h; i++)
+    {
         dst_pixels[i] = 0xFF000000;
     }
-    
+
     // Calculate scale for CONTAIN (Fit inside)
     float scale_x = (float)target_w / src_w;
     float scale_y = (float)target_h / src_h;
     float scale = (scale_x < scale_y) ? scale_x : scale_y;
-    
+
     int32_t final_w = (int32_t)(src_w * scale);
     int32_t final_h = (int32_t)(src_h * scale);
-    
-    if (final_w < 1) final_w = 1;
-    if (final_h < 1) final_h = 1;
-    
+
+    if (final_w < 1)
+        final_w = 1;
+    if (final_h < 1)
+        final_h = 1;
+
     int32_t off_x = (target_w - final_w) / 2;
     int32_t off_y = (target_h - final_h) / 2;
-    
+
     // Nearest Neighbor Resizing
-    for (int y = 0; y < final_h; y++) {
-        for (int x = 0; x < final_w; x++) {
+    for (int y = 0; y < final_h; y++)
+    {
+        for (int x = 0; x < final_w; x++)
+        {
             // Map to source coordinates
             int32_t src_x = (int32_t)(x / scale);
             int32_t src_y = (int32_t)(y / scale);
-            
-            if (src_x >= src_w) src_x = src_w - 1;
-            if (src_y >= src_h) src_y = src_h - 1;
-            
+
+            if (src_x >= src_w)
+                src_x = src_w - 1;
+            if (src_y >= src_h)
+                src_y = src_h - 1;
+
             // Copy pixel
-            uint32_t * src_p = (uint32_t *)src_buf + (src_y * src_w + src_x);
-            uint32_t * dst_p = dst_pixels + ((off_y + y) * target_w + (off_x + x));
-            
+            uint32_t *src_p = (uint32_t *)src_buf + (src_y * src_w + src_x);
+            uint32_t *dst_p = dst_pixels + ((off_y + y) * target_w + (off_x + x));
+
             *dst_p = *src_p;
         }
     }
-    
-    bitmap_wrapper_t * bmp = malloc(sizeof(bitmap_wrapper_t));
+
+    bitmap_wrapper_t *bmp = malloc(sizeof(bitmap_wrapper_t));
     bmp->data = dst_buf;
     memset(&bmp->dsc, 0, sizeof(lv_image_dsc_t));
     bmp->dsc.header.cf = LV_COLOR_FORMAT_ARGB8888;
@@ -162,7 +181,7 @@ static bitmap_wrapper_t * create_thumbnail_bitmap(bitmap_wrapper_t * src, int32_
     bmp->dsc.header.stride = target_w * 4;
     bmp->dsc.data = dst_buf;
     bmp->dsc.data_size = dst_size;
-    
+
     return bmp;
 }
 
@@ -506,21 +525,25 @@ static void create_media_thumbnail(lv_obj_t *parent, media_file_t *media, int in
         img = NULL;
 
         // Check if JPG
-        const char * ext = lv_fs_get_ext(media->filepath);
+        const char *ext = lv_fs_get_ext(media->filepath);
         bool is_jpg = (strcasecmp(ext, "jpg") == 0 || strcasecmp(ext, "jpeg") == 0);
-        
+
         LV_LOG_USER("Checking file: %s, ext: %s, is_jpg: %d", media->filename, ext ? ext : "NULL", is_jpg);
 
-        if (is_jpg) {
-            bitmap_wrapper_t * full_bmp = decode_jpg_to_bitmap(prefixed_path);
-            if (full_bmp) {
-                bitmap_wrapper_t * thumb_bmp = create_thumbnail_bitmap(full_bmp, THUMBNAIL_SIZE - 10, THUMBNAIL_SIZE - 10);
-                
+        if (is_jpg)
+        {
+            bitmap_wrapper_t *full_bmp = decode_jpg_to_bitmap(prefixed_path);
+            if (full_bmp)
+            {
+                bitmap_wrapper_t *thumb_bmp = create_thumbnail_bitmap(full_bmp, THUMBNAIL_SIZE - 10, THUMBNAIL_SIZE - 10);
+
                 // Free full bmp
-                if (full_bmp->data) free(full_bmp->data);
+                if (full_bmp->data)
+                    free(full_bmp->data);
                 free(full_bmp);
-                
-                if (thumb_bmp) {
+
+                if (thumb_bmp)
+                {
                     img = lv_image_create(thumb_cont);
                     lv_image_set_src(img, &thumb_bmp->dsc);
                     lv_obj_set_size(img, THUMBNAIL_SIZE - 10, THUMBNAIL_SIZE - 10);
@@ -530,7 +553,8 @@ static void create_media_thumbnail(lv_obj_t *parent, media_file_t *media, int in
             }
         }
 
-        if (img == NULL) {
+        if (img == NULL)
+        {
             img = lv_image_create(thumb_cont);
             lv_image_set_src(img, prefixed_path);
         }
@@ -581,58 +605,30 @@ static void create_media_thumbnail(lv_obj_t *parent, media_file_t *media, int in
                 is_native_image = false;
             }
 #endif
-
-            if (is_native_image)
-            {
-                int32_t w = lv_image_get_src_width(img);
-                int32_t h = lv_image_get_src_height(img);
-                
-                LV_LOG_USER("Thumbnail Image Info: w=%d, h=%d", w, h);
-
-                if (w > 0 && h > 0)
-                {
-                    int32_t target_w = THUMBNAIL_SIZE - 10;
-                    int32_t target_h = THUMBNAIL_SIZE - 10;
-                    int32_t scale_x = (target_w * 256) / w;
-                    int32_t scale_y = (target_h * 256) / h;
-                    
-                    // Use MAX for COVER (Fill) behavior
-                    int32_t scale = (scale_x > scale_y) ? scale_x : scale_y;
-
-                    LV_LOG_USER("Scaling Thumbnail (Fallback): scale=%d", scale);
-
-                    // Resize widget to fixed size
-                    lv_obj_set_size(img, target_w, target_h);
-                    lv_obj_center(img);
-
-                    // Set pivot to center
-                    lv_image_set_pivot(img, w / 2, h / 2);
-
-                    // Apply scale
-                    lv_image_set_scale(img, scale);
-                    
-                    // Align content to center
-                    lv_image_set_inner_align(img, LV_IMAGE_ALIGN_CENTER);
-                } else {
-                    // Fallback if dimensions unknown
-                    LV_LOG_WARN("Thumbnail dimensions unknown, using CENTER align");
-                    lv_image_set_inner_align(img, LV_IMAGE_ALIGN_CENTER);
-                }
-            }
-            else
-            {
-                // For FFmpeg player, use CONTAIN
-                lv_image_set_inner_align(img, LV_IMAGE_ALIGN_CONTAIN);
+            } else {
+                // GIF loaded successfully
+                scale_image_to_fit(img, THUMBNAIL_SIZE - 10, THUMBNAIL_SIZE - 10);
             }
         }
         else
         {
-            // Fallback to icon
-            img = lv_image_create(thumb_cont);
-            lv_image_set_src(img, LV_SYMBOL_IMAGE);
-            lv_obj_set_size(img, THUMBNAIL_SIZE - 10, THUMBNAIL_SIZE - 10);
-            lv_obj_center(img);
-            lv_obj_set_style_text_color(img, lv_color_white(), 0);
+            // Use lv_image for other formats
+            LV_LOG_USER("Loading image: %s", prefixed_path);
+            lv_image_set_src(img, prefixed_path);
+
+            // Check if image loaded successfully by checking source dimensions
+            int32_t src_width = lv_image_get_src_width(img);
+            int32_t src_height = lv_image_get_src_height(img);
+            if (src_width <= 0 || src_height <= 0) {
+                LV_LOG_ERROR("Failed to load image %s (dimensions: %dx%d), using placeholder", prefixed_path, src_width, src_height);
+                // Replace with placeholder
+                lv_image_set_src(img, LV_SYMBOL_IMAGE);
+                lv_obj_set_style_text_color(img, lv_color_white(), 0);
+                lv_obj_set_style_text_font(img, font_cjk, 0);
+            } else {
+                // Use manual scaling to ensure it fits
+                scale_image_to_fit(img, THUMBNAIL_SIZE - 10, THUMBNAIL_SIZE - 10);
+            }
         }
     }
 
@@ -788,93 +784,42 @@ static void show_fullscreen_media(const char *filepath, bool is_video, bool is_a
         fullscreen_image = NULL;
 
         // Check if JPG
-        const char * ext = lv_fs_get_ext(filepath);
+        const char *ext = lv_fs_get_ext(filepath);
         bool is_jpg = (strcasecmp(ext, "jpg") == 0 || strcasecmp(ext, "jpeg") == 0);
-        
-        if (is_jpg) {
-            bitmap_wrapper_t * full_bmp = decode_jpg_to_bitmap(prefixed_path);
-            if (full_bmp) {
+
+        if (is_jpg)
+        {
+            bitmap_wrapper_t *full_bmp = decode_jpg_to_bitmap(prefixed_path);
+            if (full_bmp)
+            {
                 fullscreen_image = lv_image_create(fullscreen_container);
                 lv_image_set_src(fullscreen_image, &full_bmp->dsc);
                 lv_obj_add_event_cb(fullscreen_image, bitmap_free_cb, LV_EVENT_DELETE, full_bmp);
             }
         }
 
-        if (fullscreen_image == NULL) {
+        if (fullscreen_image == NULL)
+        {
             fullscreen_image = lv_image_create(fullscreen_container);
             lv_image_set_src(fullscreen_image, prefixed_path);
-        }
 
-        // Check if loaded
-        int32_t w = lv_image_get_src_width(fullscreen_image);
-        if (w <= 0)
-        {
-            LV_LOG_WARN("lv_image 加載全屏失敗 %s，嘗試 FFmpeg", filepath);
-            lv_obj_delete(fullscreen_image);
-            fullscreen_image = NULL;
-
-#if LV_USE_FFMPEG
-            fullscreen_video = lv_ffmpeg_player_create(fullscreen_container);
-            if (fullscreen_video)
-            {
-                if (lv_ffmpeg_player_set_src(fullscreen_video, filepath) == LV_RESULT_OK)
-                {
-                    lv_coord_t screen_w = lv_display_get_horizontal_resolution(NULL);
-                    lv_coord_t screen_h = lv_display_get_vertical_resolution(NULL);
-                    lv_obj_set_size(fullscreen_video, screen_w, screen_h);
-                    lv_obj_center(fullscreen_video);
-                    lv_image_set_inner_align(fullscreen_video, LV_IMAGE_ALIGN_CONTAIN);
-                    lv_ffmpeg_player_set_cmd(fullscreen_video, LV_FFMPEG_PLAYER_CMD_START);
-                    lv_ffmpeg_player_set_auto_restart(fullscreen_video, false);
-                }
-                else
-                {
-                    lv_obj_delete(fullscreen_video);
-                    fullscreen_video = NULL;
-                }
+            // Check if image loaded successfully
+            int32_t src_width = lv_image_get_src_width(fullscreen_image);
+            int32_t src_height = lv_image_get_src_height(fullscreen_image);
+            LV_LOG_USER("Fullscreen image %s dimensions: %dx%d", filepath, src_width, src_height);
+            if (src_width <= 0 || src_height <= 0) {
+                LV_LOG_ERROR("Failed to load fullscreen image %s (dimensions: %dx%d)", prefixed_path, src_width, src_height);
+                lv_obj_delete(fullscreen_image);
+                fullscreen_image = NULL;
+                return;
             }
-#endif
-        }
-        else
-        {
+
+            // Get screen dimensions
             lv_coord_t screen_w = lv_display_get_horizontal_resolution(NULL);
             lv_coord_t screen_h = lv_display_get_vertical_resolution(NULL);
-            lv_obj_set_size(fullscreen_image, screen_w, screen_h);
 
-            // Manual scaling for fullscreen images
-            int32_t w = lv_image_get_src_width(fullscreen_image);
-            int32_t h = lv_image_get_src_height(fullscreen_image);
-            
-            LV_LOG_USER("Fullscreen Image Info: w=%d, h=%d", w, h);
-
-            if (w > 0 && h > 0)
-            {
-                int32_t scale_x = (screen_w * 256) / w;
-                int32_t scale_y = (screen_h * 256) / h;
-                int32_t scale = (scale_x < scale_y) ? scale_x : scale_y;
-
-                // Calculate final dimensions
-                int32_t final_w = (w * scale) / 256;
-                int32_t final_h = (h * scale) / 256;
-
-                LV_LOG_USER("Scaling Fullscreen: scale=%d, final_w=%d, final_h=%d", scale, final_w, final_h);
-
-                // Resize widget to fit the scaled image exactly
-                lv_obj_set_size(fullscreen_image, final_w, final_h);
-                lv_obj_center(fullscreen_image);
-
-                // Set pivot to top-left (0,0)
-                lv_image_set_pivot(fullscreen_image, 0, 0);
-
-                // Apply scale
-                lv_image_set_scale(fullscreen_image, scale);
-                
-                // Align content to top-left of the widget
-                lv_image_set_inner_align(fullscreen_image, LV_IMAGE_ALIGN_TOP_LEFT);
-            } else {
-                LV_LOG_WARN("Fullscreen dimensions unknown, using CENTER align");
-                lv_image_set_inner_align(fullscreen_image, LV_IMAGE_ALIGN_CENTER);
-            }
+            // Use manual scaling to ensure it fits
+            scale_image_to_fit(fullscreen_image, screen_w, screen_h);
         }
     }
 
